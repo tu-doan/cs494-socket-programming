@@ -1,7 +1,8 @@
 import socket
 import threading
 
-from client import function
+from constant import *
+from utils import make_msg, make_msg_encrypt
 
 
 def run():
@@ -56,16 +57,12 @@ class Client():
         try:
             client_connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client_connection.connect((self.server, self.port))
-            print("Connect successful to %s:%s" % (self.server, self.port))
             client_connection.sendall(bytes("I want to connect.", 'UTF-8'))
 
             # first receive message is private key
-            msg_recv = self._conn.recv(8192)
-            from utils import decode_msg
-            raw_data = decode_msg(msg_recv)
-            if raw_data['type'] != "nothing":
-                raise Exception("Error")
-            self.pkey = raw_data['data']
+            msg_recv = client_connection.recv(8192)
+            self.pkey = msg_recv
+            print("Connect successful to %s:%s" % (self.server, self.port))
             return client_connection
         except Exception:
             raise Exception("Cannot connect to server.")
@@ -94,8 +91,12 @@ class Client():
 
     def command_handle(self, command=""):
         """ Handling all input commands """
-        if command.startswith("login"):
-            function.login(self._conn, command)
+        if command.startswith(CMD_LOGIN):
+            self.login(command)
+            return
+        if command.startswith(CMD_REGISTER):
+            self.register(command)
+            return
 
     def msg_handle(self, msg_recv):
         """ Handling received messages """
@@ -104,6 +105,76 @@ class Client():
         msg_type = raw_data['type']
         msg_data = raw_data['data']
         print(msg_type, msg_data)
+
+    def login(self, command):
+        """ Login user """
+        from getpass import getpass
+        args = command.split(" ")
+        if len(args) < 2:
+            print("[ERROR] Username is required for login")
+            return
+
+        password = getpass(">> Password: ")
+
+        if command.startswith(CMD_LOGIN_ENCRYPT):
+            username = args[2]
+            data = {'username': username, 'password': password}
+            msg = make_msg_encrypt(CMD_LOGIN_ENCRYPT, data, self.pkey)
+        else:
+            username = args[1]
+            data = {'username': username, 'password': password}
+            msg = make_msg(CMD_LOGIN, data)
+        self._conn.sendall(msg)
+
+    def register(self, command):
+        """ Register user """
+        from getpass import getpass
+        args = command.split(" ")
+        if len(args) < 2:
+            print("[ERROR] Username is required for register")
+            return
+
+        password = getpass(">> Password: ")
+
+        if command.startswith(CMD_REGISTER_ENCRYPT):
+            username = args[2]
+            data = {'username': username, 'password': password}
+            msg = make_msg_encrypt(CMD_REGISTER_ENCRYPT, data, self.pkey)
+        else:
+            username = args[1]
+            data = {'username': username, 'password': password}
+            msg = make_msg(CMD_REGISTER, data)
+        self._conn.sendall(msg)
+
+    def change_pass(self, command):
+        """ Change password user """
+        from getpass import getpass
+        args = command.split(" ")
+        if len(args) < 2:
+            print("[ERROR] Username is required for change password.")
+            return
+
+        cur_password = getpass(">> Current Password: ")
+        new__password = getpass(">> New Password: ")
+
+        if command.startswith(CMD_CHANGE_PASS_ENCRYPT):
+            username = args[2]
+            data = {
+                'username': username,
+                'cur_password': cur_password,
+                'new__password': new__password
+            }
+            msg = make_msg_encrypt(CMD_CHANGE_PASS_ENCRYPT, data, self.pkey)
+        else:
+            username = args[1]
+            data = {
+                'username': username,
+                'cur_password': cur_password,
+                'new__password': new__password
+            }
+            msg = make_msg(CMD_CHANGE_PASS, data)
+        self._conn.sendall(msg)
+
 
 
 class ListenThread(threading.Thread):

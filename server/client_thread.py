@@ -1,8 +1,9 @@
 """ server side """
 import threading
-import os
-import binascii
+from cryptography.fernet import Fernet
+
 from utils import make_msg
+
 
 class ClientThread(threading.Thread):
     """ Init and run thread for new connection  """
@@ -11,9 +12,9 @@ class ClientThread(threading.Thread):
         threading.Thread.__init__(self)
         self.csocket = clientsocket
         self.client_address = clientAddress
-        self.pkey = binascii.b2a_hex(os.urandom(15))
+        self.pkey = Fernet.generate_key()
 
-        self.csocket.send(make_msg("nothing", self.pkey))
+        self.csocket.send(self.pkey)
         print("New connection added: ", clientAddress)
 
     def run(self):
@@ -21,12 +22,10 @@ class ClientThread(threading.Thread):
         while True:
             data = self.csocket.recv(8196)
             if data == b'':
-                continue
+                break
             msg = data.decode()
             if msg == 'bye':
                 break
-            print("from client", msg)
-            self.csocket.send(make_msg("hello", msg))
-            self.csocket.send(make_msg("hello", msg))
+            print("from client: ", msg)
         print("Client at ", self.client_address, " disconnected...")
         self.csocket.close()
