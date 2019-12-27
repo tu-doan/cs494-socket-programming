@@ -13,7 +13,10 @@ def run():
     print("Server started")
     print("Waiting for client request..")
     while True:
-        server.listen(1)
-        clientsock, clientAddress = server.accept()
-        newthread = client_thread.ClientThread(clientAddress, clientsock)
-        newthread.start()
+        try:
+            server.listen(1)
+            clientsock, client_address = server.accept()
+            newthread = client_thread.ClientThread(client_address, clientsock)
+            newthread.start()
+        except KeyboardInterrupt:
+            break
