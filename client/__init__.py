@@ -1,7 +1,8 @@
 import socket
 import threading
+from cryptography.fernet import Fernet
 
-from constant import *
+from constant import Command
 from utils import make_msg, make_msg_encrypt
 
 
@@ -46,7 +47,7 @@ class Client():
     def __init__(self, server, port):
         self.server = server
         self.port = port
-        self.user = None
+        self.uid = 0
         self.pkey = None
         self.listen_thread = None
         self._stop = False
@@ -57,7 +58,6 @@ class Client():
         try:
             client_connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client_connection.connect((self.server, self.port))
-            client_connection.sendall(bytes("I want to connect.", 'UTF-8'))
 
             # first receive message is private key
             msg_recv = client_connection.recv(8192)
@@ -71,7 +71,8 @@ class Client():
         """ Close connection """
         if not self._stop:
             self._stop = True
-            self._conn.send(bytes("bye", "UTF-8"))
+            self._conn.send(b'')
+        if self._stop:
             self._conn.close()
 
     def listen(self):
@@ -85,26 +86,44 @@ class Client():
             self.close_connection()
             return False
         if msg_recv is not None:
-            print(msg_recv)
             self.msg_handle(msg_recv)
         return True
 
     def command_handle(self, command=""):
         """ Handling all input commands """
-        if command.startswith(CMD_LOGIN):
+        if command.startswith(Command.LOGIN):
             self.login(command)
-            return
-        if command.startswith(CMD_REGISTER):
+        elif command.startswith(Command.REGISTER):
             self.register(command)
-            return
+        elif command.startswith(Command.CHANGE_PASS):
+            self.change_pass(command)
+        elif command.startswith(Command.CHECK_USER):
+            self.check_user(command)
+        elif command.startswith(Command.SETUP_USER):
+            self.setup_info(command)
+        elif command.startswith(Command.DOWNLOAD):
+            self.download_request(command)
+        elif command.startswith(Command.UPLOAD):
+            self.upload_request(command)
+        elif command.startswith(Command.CHAT):
+            self.chat(command)
+        else:
+            print(">> Undefined command.")
 
     def msg_handle(self, msg_recv):
         """ Handling received messages """
         from utils import decode_msg
         raw_data = decode_msg(msg_recv)
         msg_type = raw_data['type']
-        msg_data = raw_data['data']
-        print(msg_type, msg_data)
+        response = raw_data['data']
+        if msg_type == Command.LOGIN:
+            self.response_login(response)
+        elif msg_type.startswith(Command.DOWNLOAD):
+            self.download_response(msg_type, response)
+        elif msg_type.startswith(Command.UPLOAD):
+            self.upload_response(msg_type, response)
+        else:
+            print(">> ", response['message'])
 
     def login(self, command):
         """ Login user """
@@ -116,14 +135,14 @@ class Client():
 
         password = getpass(">> Password: ")
 
-        if command.startswith(CMD_LOGIN_ENCRYPT):
+        if command.startswith(Command.LOGIN_ENCRYPT):
             username = args[2]
             data = {'username': username, 'password': password}
-            msg = make_msg_encrypt(CMD_LOGIN_ENCRYPT, data, self.pkey)
+            msg = make_msg_encrypt(Command.LOGIN_ENCRYPT, data, self.pkey)
         else:
             username = args[1]
             data = {'username': username, 'password': password}
-            msg = make_msg(CMD_LOGIN, data)
+            msg = make_msg(Command.LOGIN, data)
         self._conn.sendall(msg)
 
     def register(self, command):
@@ -136,14 +155,14 @@ class Client():
 
         password = getpass(">> Password: ")
 
-        if command.startswith(CMD_REGISTER_ENCRYPT):
+        if command.startswith(Command.REGISTER_ENCRYPT):
             username = args[2]
             data = {'username': username, 'password': password}
-            msg = make_msg_encrypt(CMD_REGISTER_ENCRYPT, data, self.pkey)
+            msg = make_msg_encrypt(Command.REGISTER_ENCRYPT, data, self.pkey)
         else:
             username = args[1]
             data = {'username': username, 'password': password}
-            msg = make_msg(CMD_REGISTER, data)
+            msg = make_msg(Command.REGISTER, data)
         self._conn.sendall(msg)
 
     def change_pass(self, command):
@@ -155,26 +174,160 @@ class Client():
             return
 
         cur_password = getpass(">> Current Password: ")
-        new__password = getpass(">> New Password: ")
+        new_password = getpass(">> New Password: ")
 
-        if command.startswith(CMD_CHANGE_PASS_ENCRYPT):
+        if command.startswith(Command.CHANGE_PASS_ENCRYPT):
             username = args[2]
             data = {
                 'username': username,
                 'cur_password': cur_password,
-                'new__password': new__password
+                'new_password': new_password
             }
-            msg = make_msg_encrypt(CMD_CHANGE_PASS_ENCRYPT, data, self.pkey)
+            msg = make_msg_encrypt(Command.CHANGE_PASS_ENCRYPT, data, self.pkey)
         else:
             username = args[1]
             data = {
                 'username': username,
                 'cur_password': cur_password,
-                'new__password': new__password
+                'new_password': new_password
             }
-            msg = make_msg(CMD_CHANGE_PASS, data)
+            msg = make_msg(Command.CHANGE_PASS, data)
         self._conn.sendall(msg)
 
+    def check_user(self, command):
+        args = command.split(" ")
+        if command.startswith(Command.CHECK_USER + ' -'):
+            if len(args) < 3:
+                print("[ERROR] Username is required for check_user")
+                return
+            msg_type = args[0] + ' ' + args[1]
+            data = args[2]
+        else:
+            if len(args) < 2:
+                print("[ERROR] Username is required for check_user")
+                return
+            msg_type = args[0]
+            data = args[1]
+
+        msg = make_msg(msg_type, data)
+        self._conn.sendall(msg)
+
+    def setup_info(self, command):
+        """ Set up information for current user """
+        args = command.split(" ")
+        args_num = len(args)
+        if args_num < 3:
+            print(">> Missing arguments!")
+            return
+        username = args[args_num-1]
+        if args_num > 4:
+            value = ""
+        else:
+            value = args[2]
+        if command.startswith(Command.SETUP_USER_NOTE):
+            msg_type = Command.SETUP_USER_NOTE
+        elif command.startswith(Command.SETUP_USER_DATE):
+            msg_type = Command.SETUP_USER_DATE
+        msg = make_msg(msg_type, {'username': username, 'value': value})
+        self._conn.sendall(msg)
+
+    def download_request(self, command):
+        """ Make request download """
+        args = command.split(" ")
+        if command.startswith(Command.DOWNLOAD_ENCRYPT):
+            filename = args[2]
+            msg = make_msg(Command.DOWNLOAD_ENCRYPT, {'filename': filename})
+        elif args[1] == '-multi_file':
+            filename = []
+            for index in range(2, len(args)):
+                filename.append(args[index])
+        else:
+            filename = args[1]
+        msg = make_msg(Command.DOWNLOAD, {'filename': filename})
+        self._conn.send(msg)
+
+    def download_response(self, msg_type, response):
+        print(">> Starting download.")
+        self._conn.send(b'ok')
+        is_encrypt = False
+        if msg_type == Command.DOWNLOAD_ENCRYPT:
+            is_encrypt = True
+        filename = response['filename']
+        with open(filename, 'wb') as file:
+            while True:
+                raw_data = self._conn.recv(8192)
+                print('receive %s' % raw_data)
+                if not raw_data or raw_data == b'':
+                    print("Connection to server broke.")
+                    self.close_connection()
+                    return
+                if raw_data == b'done':
+                    break
+                if is_encrypt:
+                    _fernet = Fernet(self.pkey)
+                    data = _fernet.decrypt(raw_data)
+                else:
+                    data = raw_data
+                file.write(data)
+                self._conn.send(b'ok')
+        return
+
+    def upload_request(self, command):
+        """ Make request to upload """
+        args = command.split(" ")
+        if command.startswith(Command.UPLOAD_ENCRYPT):
+            filename = args[2]
+            msg = make_msg(Command.UPLOAD_ENCRYPT, {'filename': filename})
+            self._conn.send(msg)
+        elif args[1] == '-multi_file':
+            filename = []
+            for index in range(2, len(args)):
+                filename.append(args[index])
+        else:
+            filename = args[1]
+        msg = make_msg(Command.UPLOAD, {'filename': filename})
+        self._conn.send(msg)
+
+    def upload_response(self, msg_type, response):
+        is_encrypt = False
+        if msg_type == Command.UPLOAD_ENCRYPT:
+            is_encrypt = True
+        filename = response['filename']
+        file = open(filename, 'rb')
+        read_stream = file.read(1024)
+        while read_stream:
+            if is_encrypt:
+                _fernet = Fernet(self.pkey)
+                send_data = _fernet.encrypt(read_stream)
+            else:
+                send_data = read_stream
+            self._conn.send(send_data)
+            print('Sent %s' % send_data)
+            ack = self._conn.recv(1024)
+            if ack != b'ok':
+                print("Downloading error.")
+                self.close_connection()
+            if not ack or ack == b'':
+                self.close_connection()
+            read_stream = file.read(1024)
+        file.close()
+        self._conn.send(b'done')
+        return
+
+    def chat(self, command):
+        """ Make chat terminal """
+
+    def response_login(self, response):
+        """ Handle response after login request """
+        if response['code'] == 200:
+            self.uid = int(response['uid'])
+            print(">> ", response['message'])
+        else:
+            print(">> ", response['message'])
+
+    def chat_request(self):
+        """ Receive chat request from anther client """
+        return
 
 
 class ListenThread(threading.Thread):
